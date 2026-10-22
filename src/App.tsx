@@ -278,6 +278,7 @@ export default function App() {
           handlePageChange(dir);
           sendAction({ type: 'pdf:page', direction: dir });
         }}
+        onSwitchToPhone={() => setRole('phone')}
       />
 
       {/* Floating Role Switcher Pill for quick demo switching */}

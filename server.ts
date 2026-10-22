@@ -9,7 +9,9 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const server = createServer(app);
-const wss = new WebSocketServer({ server });
+
+// Use noServer mode so we safely control which upgrade requests we handle
+const wss = new WebSocketServer({ noServer: true });
 
 interface ClientInfo {
   ws: WebSocket;
@@ -18,15 +20,32 @@ interface ClientInfo {
   deviceName?: string;
 }
 
-// Map socket to client metadata
 const clientMap = new Map<WebSocket, ClientInfo>();
 
-// Map roomId to Room State
 interface RoomState {
   host?: WebSocket;
   phones: Set<WebSocket>;
 }
 const rooms = new Map<string, RoomState>();
+
+// Handle WebSocket upgrade manually to prevent conflicts with Vite
+server.on('upgrade', (request, socket, head) => {
+  try {
+    const url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
+    const pathname = url.pathname;
+
+    // Handle WebSocket connections on /ws or / (fallback)
+    if (pathname === '/ws' || pathname === '/') {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+      });
+    } else {
+      socket.destroy();
+    }
+  } catch (e) {
+    socket.destroy();
+  }
+});
 
 wss.on('connection', (ws: WebSocket) => {
   ws.on('message', (data: string | Buffer) => {
@@ -38,7 +57,6 @@ wss.on('connection', (ws: WebSocket) => {
         const role: 'host' | 'phone' = msg.role;
         const targetRoom = (roomId || 'default').toUpperCase().trim();
         
-        // Register client info
         clientMap.set(ws, {
           ws,
           role,
@@ -54,7 +72,6 @@ wss.on('connection', (ws: WebSocket) => {
 
         if (role === 'host') {
           room.host = ws;
-          // Notify host about current state
           ws.send(JSON.stringify({
             type: 'room:joined',
             role: 'host',
@@ -70,7 +87,6 @@ wss.on('connection', (ws: WebSocket) => {
             hostConnected: Boolean(room.host && room.host.readyState === WebSocket.OPEN),
           }));
 
-          // Notify host that phone joined
           if (room.host && room.host.readyState === WebSocket.OPEN) {
             room.host.send(JSON.stringify({
               type: 'phone:connected',
@@ -82,21 +98,19 @@ wss.on('connection', (ws: WebSocket) => {
         return;
       }
 
-      // Find sender info
       const client = clientMap.get(ws);
       if (!client) return;
 
       const room = rooms.get(client.roomId);
       if (!room) return;
 
-      // Handle Relay from Phone to Host
+      // Relay phone actions to host
       if (client.role === 'phone') {
-        // Forward to host
         if (room.host && room.host.readyState === WebSocket.OPEN) {
           room.host.send(data.toString());
         }
       } 
-      // Handle Relay from Host to Phone (e.g. document change, page sync)
+      // Relay host actions to phones
       else if (client.role === 'host') {
         for (const phone of room.phones) {
           if (phone.readyState === WebSocket.OPEN) {
@@ -140,8 +154,12 @@ wss.on('connection', (ws: WebSocket) => {
     }
   });
 
-  // Heartbeat ping
   ws.on('ping', () => ws.pong());
+});
+
+// Redirect any request to /main.tsx directly to /src/main.tsx
+app.get('/main.tsx', (_req, res) => {
+  res.redirect('/src/main.tsx');
 });
 
 // Setup Vite or Static File Serving

@@ -7,6 +7,7 @@ interface HostPairingModalProps {
   connectedPhones: number;
   isOpen: boolean;
   onClose: () => void;
+  onSwitchToPhone?: () => void;
 }
 
 export function HostPairingModal({
@@ -14,6 +15,7 @@ export function HostPairingModal({
   connectedPhones,
   isOpen,
   onClose,
+  onSwitchToPhone,
 }: HostPairingModalProps) {
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
@@ -47,10 +49,6 @@ export function HostPairingModal({
     } catch (e) {
       console.warn('Clipboard write failed', e);
     }
-  };
-
-  const openSimulatedPhone = () => {
-    window.open(phoneUrl, '_blank', 'width=420,height=860');
   };
 
   return (
@@ -112,7 +110,7 @@ export function HostPairingModal({
             <span>
               {connectedPhones > 0 
                 ? `Đã liên kết ${connectedPhones} thiết bị điện thoại`
-                : 'Đang đợi điện thoại kết nối...'}
+                : 'Đang đợi điện thoại quét mã...'}
             </span>
           </div>
           {connectedPhones > 0 && (
@@ -123,7 +121,7 @@ export function HostPairingModal({
         </div>
 
         {/* Action Controls */}
-        <div className="space-y-2">
+        <div className="space-y-2.5">
           <div className="flex items-center gap-2">
             <input
               type="text"
@@ -136,17 +134,34 @@ export function HostPairingModal({
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors whitespace-nowrap"
             >
               {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              {copied ? 'Đã sao chép' : 'Sao chép link'}
+              {copied ? 'Đã chép' : 'Sao chép link'}
             </button>
           </div>
 
-          <button
-            onClick={openSimulatedPhone}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.99]"
-          >
-            <ExternalLink className="w-4 h-4" />
-            Mở cửa sổ giả lập điện thoại để thử nghiệm ngay
-          </button>
+          <div className="grid grid-cols-2 gap-2">
+            <a
+              href={phoneUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors text-center"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Mở tab mới</span>
+            </a>
+
+            {onSwitchToPhone && (
+              <button
+                onClick={() => {
+                  onClose();
+                  onSwitchToPhone();
+                }}
+                className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20 transition-colors text-center"
+              >
+                <Smartphone className="w-3.5 h-3.5" />
+                <span>Thử ngay trên tab này</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

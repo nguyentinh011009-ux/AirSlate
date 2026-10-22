@@ -35,6 +35,7 @@ interface HostWorkspaceProps {
   currentPage: number;
   totalPages: number;
   onPageChange: (direction: 'next' | 'prev') => void;
+  onSwitchToPhone?: () => void;
 }
 
 export function HostWorkspace({
@@ -43,6 +44,7 @@ export function HostWorkspace({
   connectionLatency,
   isPeerConnected,
   onSendAction: _onSendAction,
+  onSwitchToPhone,
   activeStroke,
   strokes,
   onUndo,
@@ -381,6 +383,7 @@ export function HostWorkspace({
         connectedPhones={connectedPhones}
         isOpen={showPairingModal}
         onClose={() => setShowPairingModal(false)}
+        onSwitchToPhone={onSwitchToPhone}
       />
     </div>
   );

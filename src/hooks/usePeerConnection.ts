@@ -36,6 +36,8 @@ export function usePeerConnection({
   const wsRef = useRef<WebSocket | null>(null);
   const peerConnRef = useRef<RTCPeerConnection | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isDestroyedRef = useRef<boolean>(false);
 
   // Keep callback refs fresh
   const callbacksRef = useRef({
@@ -106,6 +108,8 @@ export function usePeerConnection({
   // WebRTC Setup
   const setupWebRTC = useCallback((isInitiator: boolean) => {
     try {
+      if (typeof window === 'undefined' || !window.RTCPeerConnection) return;
+
       const pc = new RTCPeerConnection({
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
@@ -127,16 +131,11 @@ export function usePeerConnection({
       };
 
       if (isInitiator) {
-        // Host creates data channel
         const dc = pc.createDataChannel('airslate-data', { ordered: false });
         dataChannelRef.current = dc;
 
-        dc.onopen = () => {
-          setIsPeerConnected(true);
-        };
-        dc.onclose = () => {
-          setIsPeerConnected(false);
-        };
+        dc.onopen = () => setIsPeerConnected(true);
+        dc.onclose = () => setIsPeerConnected(false);
         dc.onmessage = (e) => {
           try {
             const data = JSON.parse(e.data);
@@ -146,27 +145,26 @@ export function usePeerConnection({
           }
         };
 
-        pc.createOffer().then((offer) => {
-          pc.setLocalDescription(offer);
-          wsRef.current?.send(
-            JSON.stringify({
-              type: 'webrtc:signal',
-              roomId,
-              data: { offer },
-            })
-          );
-        });
+        pc.createOffer()
+          .then((offer) => pc.setLocalDescription(offer))
+          .then(() => {
+            if (pc.localDescription && wsRef.current?.readyState === WebSocket.OPEN) {
+              wsRef.current.send(
+                JSON.stringify({
+                  type: 'webrtc:signal',
+                  roomId,
+                  data: { offer: pc.localDescription },
+                })
+              );
+            }
+          })
+          .catch((err) => console.warn('Offer creation failed', err));
       } else {
-        // Phone receives data channel
         pc.ondatachannel = (event) => {
           const dc = event.channel;
           dataChannelRef.current = dc;
-          dc.onopen = () => {
-            setIsPeerConnected(true);
-          };
-          dc.onclose = () => {
-            setIsPeerConnected(false);
-          };
+          dc.onopen = () => setIsPeerConnected(true);
+          dc.onclose = () => setIsPeerConnected(false);
           dc.onmessage = (e) => {
             try {
               const data = JSON.parse(e.data);
@@ -182,92 +180,108 @@ export function usePeerConnection({
     }
   }, [roomId, handleIncomingMessage]);
 
-  // Connect WebSocket
+  // Connect & reconnect WebSocket
   useEffect(() => {
     if (!roomId) return;
+    isDestroyedRef.current = false;
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}`;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
+    function connect() {
+      if (isDestroyedRef.current) return;
 
-    ws.onopen = () => {
-      setIsConnected(true);
-      // Join room
-      ws.send(
-        JSON.stringify({
-          type: 'join',
-          role,
-          roomId,
-          deviceName: role === 'host' ? 'Máy tính Host' : navigator.userAgent.includes('Mobile') ? 'Điện thoại di động' : 'Thiết bị phụ',
-        })
-      );
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws`;
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
 
-      if (role === 'host') {
-        // Initialize WebRTC as initiator once ready
-        setupWebRTC(true);
-      }
-    };
+      ws.onopen = () => {
+        setIsConnected(true);
+        ws.send(
+          JSON.stringify({
+            type: 'join',
+            role,
+            roomId,
+            deviceName: role === 'host' ? 'Máy tính Host' : navigator.userAgent.includes('Mobile') ? 'Điện thoại di động' : 'Thiết bị phụ',
+          })
+        );
 
-    ws.onmessage = async (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-
-        if (msg.type === 'webrtc:signal' && msg.data) {
-          const pc = peerConnRef.current;
-          if (msg.data.offer) {
-            if (!pc) setupWebRTC(false);
-            const currentPc = peerConnRef.current;
-            if (currentPc) {
-              await currentPc.setRemoteDescription(new RTCSessionDescription(msg.data.offer));
-              const answer = await currentPc.createAnswer();
-              await currentPc.setLocalDescription(answer);
-              ws.send(
-                JSON.stringify({
-                  type: 'webrtc:signal',
-                  roomId,
-                  data: { answer },
-                })
-              );
-            }
-          } else if (msg.data.answer && pc) {
-            await pc.setRemoteDescription(new RTCSessionDescription(msg.data.answer));
-          } else if (msg.data.candidate && pc) {
-            await pc.addIceCandidate(new RTCIceCandidate(msg.data.candidate));
-          }
-          return;
+        if (role === 'host') {
+          setupWebRTC(true);
         }
+      };
 
-        // Process application action message
-        handleIncomingMessage(msg);
-      } catch (err) {
-        console.error('Error parsing WS message:', err);
-      }
-    };
+      ws.onmessage = async (event) => {
+        try {
+          const msg = JSON.parse(event.data);
 
-    ws.onclose = () => {
-      setIsConnected(false);
-      setIsPeerConnected(false);
-    };
+          if (msg.type === 'webrtc:signal' && msg.data) {
+            const pc = peerConnRef.current;
+            if (msg.data.offer) {
+              if (!pc) setupWebRTC(false);
+              const currentPc = peerConnRef.current;
+              if (currentPc) {
+                await currentPc.setRemoteDescription(new RTCSessionDescription(msg.data.offer));
+                const answer = await currentPc.createAnswer();
+                await currentPc.setLocalDescription(answer);
+                ws.send(
+                  JSON.stringify({
+                    type: 'webrtc:signal',
+                    roomId,
+                    data: { answer },
+                  })
+                );
+              }
+            } else if (msg.data.answer && pc) {
+              await pc.setRemoteDescription(new RTCSessionDescription(msg.data.answer));
+            } else if (msg.data.candidate && pc) {
+              await pc.addIceCandidate(new RTCIceCandidate(msg.data.candidate));
+            }
+            return;
+          }
 
-    // Periodic ping for latency measurement
+          handleIncomingMessage(msg);
+        } catch (err) {
+          console.error('Error parsing WS message:', err);
+        }
+      };
+
+      ws.onclose = () => {
+        setIsConnected(false);
+        setIsPeerConnected(false);
+        // Auto-reconnect if not deliberately closed
+        if (!isDestroyedRef.current) {
+          reconnectTimeoutRef.current = setTimeout(() => {
+            connect();
+          }, 1500);
+        }
+      };
+
+      ws.onerror = () => {
+        ws.close();
+      };
+    }
+
+    connect();
+
+    // Periodic ping
     const pingInterval = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
         const start = performance.now();
-        ws.send(JSON.stringify({ type: 'ping' }));
+        wsRef.current.send(JSON.stringify({ type: 'ping' }));
         setConnectionLatency(Math.round(performance.now() - start));
       }
     }, 5000);
 
     return () => {
+      isDestroyedRef.current = true;
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       clearInterval(pingInterval);
-      ws.close();
+      wsRef.current?.close();
       dataChannelRef.current?.close();
       peerConnRef.current?.close();
     };
   }, [role, roomId, handleIncomingMessage, setupWebRTC]);
 
-  // Unified send function (prefers DataChannel if available for sub-10ms latency, falls back to WebSocket)
+  // Unified send action
   const sendAction = useCallback((payload: any) => {
     const raw = JSON.stringify({ ...payload, roomId });
 
@@ -276,7 +290,7 @@ export function usePeerConnection({
         dataChannelRef.current.send(raw);
         return;
       } catch (e) {
-        // fall back to ws
+        // fallback to WebSocket
       }
     }
 
