@@ -1,0 +1,6 @@
+{
+  "name": "AirSlate — Bảng Vẽ & Chuột Cảm Ứng PC Qua Điện Thoại",
+  "description": "Biến điện thoại thành bảng vẽ cảm ứng lực Wacom, bàn rê chuột đa điểm và bộ điều khiển lướt trang PDF trên máy tính mượt mà qua mạng nội bộ.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
